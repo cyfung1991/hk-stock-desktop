@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"console.log\\(require\\('d:/Project/hk-stock-desktop/node_modules/undici/package.json'\\).version\\)\")",
+      "WebFetch(domain:www.etnet.com.hk)",
+      "Bash(curl -s https://www.etnet.com.hk/www/eng/stocks/realtime/quote.php?code=0005 -H 'User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 \\(KHTML, like Gecko\\) Chrome/125.0.0.0 Safari/537.36' -H 'Accept: text/html,application/xhtml+xml' -H 'Accept-Language: zh-HK,zh;q=0.9,en;q=0.8' --max-time 15)",
+      "Bash(grep -E \"<table|<tr|<td|<span.*[0-9]+\\\\.[0-9]{2}|<div.*[0-9]{2,}\" \"C:\\\\Users\\\\siufu\\\\.claude\\\\projects\\\\d--Project-hk-stock-desktop\\\\d1b663c6-ba67-4f98-b8f7-fac1ca4d2366\\\\tool-results\\\\bb29aqwvw.txt\")",
+      "Bash(curl -s -H \"User-Agent: Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36\" \"https://www.etnet.com.hk/www/eng/stocks/realtime/quote.php?code=0005\")",
+      "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/eng/stocks/ads/stocks_ad_quote.js?v=20230618\")",
+      "Bash(grep -oE \"/\\(ajax|api|www\\)/[^ '\\\\\"]*\\\\.php\" /tmp/etnet_page.html | sort -u | grep -v '#' | head -20)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -I \"https://www.etnet.com.hk/api/quote/0005\")",
+      "Bash(curl -s -I \"https://www.etnet.com.hk/www/data/stockquote.php?code=0005\")",
+      "Bash(curl -s \"https://rtdb.etnet.com.hk/quote/0005\")",
+      "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/eng/stocks/realtime/quote.php?code=0005\")",
+      "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/eng/stocks/realtime/quote.php?code=0005\" 2>/dev/null > /tmp/full_page.html && wc -l /tmp/full_page.html && grep -n \"reloadpage\\\\|setInterval\\\\|refresh\\\\|ajax\\\\|fetch\\\\|load\" /tmp/full_page.html | head -30)",
+      "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/eng/stocks/realtime/quotedata.php?code=0005\")",
+      "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/ajax/quote.php?code=0005\")",
+      "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/data/quote.php?code=0005\")"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
+    ]
+  }
+}
