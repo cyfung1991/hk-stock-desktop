@@ -1,9 +1,10 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "co.storesync.hk-stock-desktop",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "HK Stock Desktop",
+  "icon": "build/icon",
   "directories": {
     "output": "release/${version}"
   },

@@ -18,7 +18,23 @@
       "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/ajax/quote.php?code=0005\")",
       "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/data/quote.php?code=0005\")",
       "WebFetch(domain:query1.finance.yahoo.com)",
-      "PowerShell(npm run build 2>&1)"
+      "PowerShell(npm run build 2>&1)",
+      "WebFetch(domain:www.hkex.com.hk)",
+      "WebFetch(domain:www1.hkex.com.hk)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit)",
+      "WebFetch(domain:finance.yahoo.com)",
+      "WebFetch(domain:www.bloomberg.com)",
+      "WebFetch(domain:quote.hkex.com.hk)",
+      "WebFetch(domain:www.wiseshare.hk)",
+      "WebFetch(domain:www.investing.com)",
+      "WebFetch(domain:finance.google.com)",
+      "WebFetch(domain:www.google.com)",
+      "WebFetch(domain:mobile.etnet.com.hk)",
+      "WebFetch(domain:push2.eastmoney.com)",
+      "WebFetch(domain:push2delay.eastmoney.com)"
     ],
     "additionalDirectories": [
       "\\tmp"

@@ -3,7 +3,6 @@ import './App.css'
 import type { PricePoint, StockData } from './stock.interface'
 import { type Lang, LangContext, translations, useT } from './i18n'
 
-type Source = 'auto' | 'etnet' | 'yahoo'
 
 interface MetricTileProps {
   label: string
@@ -113,6 +112,7 @@ const formatSource = (source: string): string => {
   if (source === '雅虎財經') return source
   if (source === 'ETNet + Yahoo averages') return 'ETNet + 雅虎均線'
   if (source === 'ETNet') return 'ETNet'
+  if (source === 'HKEX') return 'HKEX'
 
   return source
 }
@@ -402,9 +402,6 @@ function App() {
   const [lang, setLang] = useState<Lang>(
     () => (localStorage.getItem('hkstock_lang') as Lang | null) ?? 'zh'
   )
-  const [source, setSource] = useState<Source>(
-    () => (localStorage.getItem('hkstock_source') as Source | null) ?? 'yahoo'
-  )
   const t = translations[lang]
 
   useEffect(() => {
@@ -421,7 +418,6 @@ function App() {
   }, [recentHistory])
 
   useEffect(() => { localStorage.setItem('hkstock_lang', lang) }, [lang])
-  useEffect(() => { localStorage.setItem('hkstock_source', source) }, [source])
 
   useEffect(() => {
     const refresh = async () => {
@@ -481,7 +477,12 @@ function App() {
   }, [stock])
 
   const keepInputFocused = () => {
-    window.requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }))
+    window.requestAnimationFrame(() => {
+      const input = inputRef.current
+      if (!input) return
+      input.focus({ preventScroll: true })
+      input.select()
+    })
   }
 
   const fetchStock = async (code: string) => {
@@ -503,12 +504,19 @@ function App() {
       return
     }
 
+    let safetyTimer: ReturnType<typeof setTimeout> | null = null
+
     try {
       setLoading(true)
       setError('')
       setStock(null)
 
-      const result = await window.stockAPI.getStock(trimmed, source)
+      // Safety net: if the IPC call never settles (hanging network), unblock after 30s
+      const withTimeout = new Promise<never>((_, reject) => {
+        safetyTimer = setTimeout(() => reject(new Error('timeout')), 30000)
+      })
+      const result = await Promise.race([window.stockAPI.getStock(trimmed, 'eastmoney'), withTimeout])
+      clearTimeout(safetyTimer!)
 
       setStock(result)
 
@@ -525,6 +533,7 @@ function App() {
     } catch {
       setError(t.errLoadFailed)
     } finally {
+      if (safetyTimer !== null) clearTimeout(safetyTimer)
       setLoading(false)
       keepInputFocused()
     }
@@ -642,15 +651,7 @@ function App() {
             </form>
 
             <div className="source-toggle" role="group" aria-label={t.sourceLabel}>
-              {(['auto', 'etnet', 'yahoo'] as Source[]).map(s => (
-                <button
-                  key={s}
-                  className={`source-btn${source === s ? ' source-btn-active' : ''}`}
-                  onClick={() => setSource(s)}
-                >
-                  {s === 'auto' ? t.sourceAuto : s === 'etnet' ? 'ETNet' : 'Yahoo'}
-                </button>
-              ))}
+              <button className="source-btn source-btn-active">東方財富</button>
             </div>
           </div>
         </header>

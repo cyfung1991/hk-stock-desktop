@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Electron desktop app for looking up Hong Kong stock quotes. Enter a stock code (e.g. `5`, `700`, `9988`) and it shows current price, today's high/low, 52-week range, moving averages (10/20/50/100/250-day), and a 1-year price chart.
+Electron desktop app for looking up Hong Kong stock quotes. Enter a stock code (e.g. `5`, `700`, `9988`) and it shows current price, today's high/low, previous close, 52-week range, moving averages (10/20/50/100/250-day), and a 1-year price chart.
 
 ## Tech Stack
 
@@ -12,106 +12,107 @@ Electron desktop app for looking up Hong Kong stock quotes. Enter a stock code (
 | UI framework | React 18 + TypeScript |
 | Bundler | Vite + vite-plugin-electron |
 | Packaging | electron-builder (portable `.exe`) |
-| Data source | Yahoo Finance v8 JSON API |
+| Primary data source | Eastmoney (東方財富) JSON API |
+| Secondary data source | Yahoo Finance v8 chart API |
 | HTTP client | axios |
 
 ## Architecture
 
 ```
 electron/
-  main.ts       — Electron main process; fetches stock data via Yahoo Finance API
-  preload.ts    — Exposes window.stockAPI.getStock() to the renderer via contextBridge
+  main.ts       — Main process: stock fetching (Eastmoney quote + Yahoo chart), IPC handler
+  preload.ts    — Exposes window.stockAPI.getStock() to renderer via contextBridge
 src/
-  App.tsx       — Full React UI: search bar, metric tiles, price chart, range chart, averages
+  App.tsx       — Full React UI: search, metric tiles, price chart, range charts, averages, sidebar
   App.css       — All styles
-  index.css     — Root font stack (includes CJK fallbacks: Microsoft YaHei, PingFang TC)
+  i18n.ts       — Translation strings (zh / en) and React context
   stock.interface.ts  — Shared StockData + PricePoint TypeScript interfaces
   main.tsx      — React entry point
 ```
 
 ## Data Flow
 
-1. User types a stock code and submits.
-2. Renderer calls `window.stockAPI.getStock(code)` (defined in `preload.ts`).
-3. Main process receives the IPC call and hits the Yahoo Finance v8 chart API:
-   ```
-   https://query1.finance.yahoo.com/v8/finance/chart/0005.HK?range=1y&interval=1d
-   ```
-4. Returns `StockData` — all price fields are pre-formatted strings (2 decimal places).
-5. Moving averages are computed in-process from the 1-year daily close history.
+1. User types a stock code and presses Enter.
+2. Renderer calls `window.stockAPI.getStock(code, 'eastmoney')` (defined in `preload.ts`).
+3. Main process runs `getEastmoneyStock` + `getYahooChart` concurrently:
+   - **Eastmoney** (`push2delay.eastmoney.com/api/qt/stock/get?secid=116.00005`): returns real-time price, day high/low, previous close, stock name in Chinese.
+   - **Yahoo chart** (`query1.finance.yahoo.com/v8/finance/chart/0005.HK?range=1y&interval=1d`): returns 1-year daily closes for moving averages, 52-week range, and the price history chart.
+4. Returns `StockData` — all price fields are pre-formatted strings (3 decimal places via `formatNumber`).
+
+## Key Functions (electron/main.ts)
+
+| Function | Purpose |
+|---|---|
+| `getEastmoneyStock(code)` | Tries `push2delay`, `push2`, `push2ct` eastmoney hosts in order; pairs with `getYahooChart` |
+| `getYahooChart(code)` | Fetches 1y + 5d chart data; returns closes, history, 52-week range, previous close |
+| `getGoogleFinanceStock(code, label)` | Fallback: scrapes Google Finance HTML for real-time quote |
+| `getYahooStock(code)` | Fallback of last resort: Yahoo Finance for all fields |
+| `getStock(code, source)` | IPC entry point; routes by source, `eastmoney` is default |
+| `tryAll(...fns)` | Tries each async function in order, returns first success |
+| `formatNumber(value, decimals)` | Formats a numeric value to a fixed-decimal string, returns `'-'` on invalid input |
+| `average(closes, days)` | Computes simple moving average from a closes array |
+
+## Eastmoney API Field Map
+
+`secid` format: `116.XXXXX` where `XXXXX` is the 5-digit zero-padded HK stock code.
+
+| Field | Meaning |
+|---|---|
+| `f43` | Current price |
+| `f44` | Day high |
+| `f45` | Day low |
+| `f57` | Stock code |
+| `f58` | Stock name (Simplified Chinese) |
+| `f60` | Previous close |
+| `f169` | Absolute price change |
+| `f170` | Percentage change |
+
+## Fallback Chain
+
+For the `eastmoney` source (the only active source):
+1. Try Eastmoney (`push2delay` → `push2` → `push2ct`)
+2. Fall back to Google Finance HTML scrape
+3. Fall back to Yahoo Finance API
 
 ## Key Behaviours / Gotchas
 
-- **Stock code padding**: input `5` → padded to `0005` → Yahoo symbol `0005.HK`.
-- **Previous close**: preferred from `meta.regularMarketPreviousClose`, falls back to `meta.chartPreviousClose`, then second-last historical close.
-- **GPU disabled**: `app.disableHardwareAcceleration()` + `disable-gpu` + `disable-software-rasterizer` are set in `main.ts` to work around rendering issues on some Windows machines. Do not remove without testing.
-- **ETNet scraping was removed**: ETNet's quote page loads prices via JavaScript; static HTML scraping via cheerio picked up prices from other stocks on the sidebar, producing wildly wrong values. All data now comes from Yahoo Finance.
+- **Stock code padding**: input `5` → `0005` for Yahoo/Google, `00005` for Eastmoney secid.
+- **No hidden BrowserWindow**: ETNet and HKEX scrapers using Electron's BrowserWindow + CDP were removed. All fetching is plain axios HTTP calls.
+- **Source selection removed from UI**: The source toggle buttons were removed. The app always uses Eastmoney with the fallback chain above.
+- **Eastmoney 502**: `push2.eastmoney.com` has an nginx proxy that intermittently returns 502. The code iterates `EASTMONEY_HOSTS` to find a live server.
+- **Yahoo chart uses `Promise.all`**: If either the 1y or 5d request fails, the whole chart call rejects. This is caught by `Promise.allSettled` in the caller — averages and history will show `'-'` but the quote still loads.
+- **Safety timeout in renderer**: `fetchStock` in `App.tsx` races the IPC call against a 30-second timer to ensure `loading` is always cleared even if the main process hangs.
+- **GPU disabled**: `app.disableHardwareAcceleration()` is set in `main.ts` for Windows compatibility. Do not remove.
 - **undici pinned to v6**: `undici` v7+ imports `node:sqlite` which does not exist in Electron 30's Node.js 20. The `overrides` field in `package.json` pins it to `^6`.
 
 ## Development Environment
 
 - **OS**: Windows 11
-- **Shell for development**: WSL2 (Ubuntu or similar)
-- **Shell for building**: Windows PowerShell (mandatory — see below)
+- **Shell for development**: WSL2 or Windows PowerShell
+- **Shell for building**: Windows PowerShell only (see below)
 
-### Running the dev server (WSL is fine)
+### Running the dev server
 
 ```bash
 npm install
 npm run dev
 ```
 
-Vite starts the renderer dev server and Electron loads it via `VITE_DEV_SERVER_URL`. Hot reload works normally.
+Vite starts the renderer dev server and Electron loads it. Hot reload works for the renderer; **restart Electron** after changes to `electron/main.ts`.
 
 ### Building the portable `.exe` (must be Windows PowerShell)
 
-electron-builder targets the host OS. Running `npm run build` inside WSL produces a Linux `.AppImage`, not a Windows `.exe`.
+electron-builder targets the host OS. Running `npm run build` inside WSL produces a Linux `.AppImage`.
 
-**Requirement**: Node.js must be installed on Windows (not just in WSL).
-Install via winget if not already done:
-```powershell
-winget install OpenJS.NodeJS.LTS
-```
-
-Then open PowerShell, navigate to the project, and build:
 ```powershell
 cd D:\Project\hk-stock-desktop
-npm install   # only needed first time or after dependency changes
 npm run build
 ```
 
-Or double-click **`build.bat`** in the project root — it does the same thing.
-
-Output: `release\0.0.0\YourAppName.exe` (portable, no installer needed).
-
-### Why build fails when run from WSL
-
-- WSL is a Linux environment; electron-builder picks `linux` as the target platform.
-- Cross-compiling to Windows from Linux requires Wine, which is unreliable and not set up here.
-- The fix is to always run `npm run build` from a native Windows shell.
-
-## Build Output
-
-After `npm run build` (run from Windows PowerShell):
-
-```
-release/
-  0.0.0/
-    YourAppName.exe     ← portable executable, ready to run
-```
-
-Intermediate folders (`dist/`, `dist-electron/`, `release/*/win-unpacked/`) are automatically cleaned up by the `postbuild` script.
-
-## Package Scripts
-
-| Script | Where to run | Purpose |
-|---|---|---|
-| `npm run dev` | WSL or Windows | Start dev server with hot reload |
-| `npm run build` | **Windows PowerShell only** | Compile + package → portable `.exe` |
-| `npm run lint` | Either | ESLint check |
+Output: `release\0.0.0\HK Stock Desktop.exe` (portable, no installer).
 
 ## Styling Notes
 
-- All UI text is Traditional Chinese.
-- Font stack in `index.css` includes `Microsoft YaHei` and `PingFang TC` to ensure CJK characters render correctly. Do not remove these fallbacks.
-- Trend colours: red = up (Hong Kong convention), green = down, blue = neutral.
+- Trend colours follow Hong Kong convention: **red = price up**, **green = price down**, blue = neutral.
+- Font stack includes `Microsoft YaHei` and `PingFang TC` for CJK characters. Do not remove.
+- All layout is in `App.css`; no CSS modules or Tailwind.
