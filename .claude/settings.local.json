@@ -16,7 +16,9 @@
       "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/eng/stocks/realtime/quote.php?code=0005\" 2>/dev/null > /tmp/full_page.html && wc -l /tmp/full_page.html && grep -n \"reloadpage\\\\|setInterval\\\\|refresh\\\\|ajax\\\\|fetch\\\\|load\" /tmp/full_page.html | head -30)",
       "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/eng/stocks/realtime/quotedata.php?code=0005\")",
       "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/ajax/quote.php?code=0005\")",
-      "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/data/quote.php?code=0005\")"
+      "Bash(curl -s -H \"User-Agent: Mozilla/5.0\" \"https://www.etnet.com.hk/www/data/quote.php?code=0005\")",
+      "WebFetch(domain:query1.finance.yahoo.com)",
+      "PowerShell(npm run build 2>&1)"
     ],
     "additionalDirectories": [
       "\\tmp"

@@ -1,6 +1,9 @@
 import { type CSSProperties, type PointerEvent, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import type { PricePoint, StockData } from './stock.interface'
+import { type Lang, LangContext, translations, useT } from './i18n'
+
+type Source = 'auto' | 'etnet' | 'yahoo'
 
 interface MetricTileProps {
   label: string
@@ -23,6 +26,23 @@ interface AveragePoint {
   label: string
   value: number | null
   display: string
+}
+
+interface SidebarEntry {
+  number: string
+  name: string
+  price: string
+  change: number | null
+  changePercent: number | null
+  trend: Trend
+}
+
+interface SidebarItemProps {
+  entry: SidebarEntry
+  isActive: boolean
+  isFav: boolean
+  onSelect: () => void
+  onToggleFav: () => void
 }
 
 interface PriceChartProps {
@@ -70,6 +90,23 @@ const formatMovement = (change: number | null, percent: number | null): string =
   if (change === null || percent === null) return '-'
 
   return `${formatSigned(change)} (${formatSigned(percent, '%')})`
+}
+
+const stockToSidebarEntry = (data: StockData): SidebarEntry => {
+  const current = toNumber(data.currentPrice)
+  const history = data.history ?? []
+  const fallbackPrev = history.length > 0 ? history[history.length - 1].close : null
+  const prev = toNumber(data.previousClose ?? '') ?? fallbackPrev
+  const change = current !== null && prev !== null ? current - prev : null
+  const changePercent = change !== null && prev ? (change / prev) * 100 : null
+  return {
+    number: data.number,
+    name: data.name,
+    price: data.currentPrice,
+    change,
+    changePercent,
+    trend: getTrend(change),
+  }
 }
 
 const formatSource = (source: string): string => {
@@ -232,8 +269,10 @@ function PriceChart({ current, history, previousClose }: PriceChartProps) {
     }
   }, [current, history, previousClose])
 
+  const t = useT()
+
   if (!chart) {
-    return <div className="price-chart-empty">沒有可用圖表歷史資料</div>
+    return <div className="price-chart-empty">{t.noChartData}</div>
   }
 
   const activePoint = activeIndex === null ? chart.latest : chart.points[activeIndex]
@@ -262,11 +301,11 @@ function PriceChart({ current, history, previousClose }: PriceChartProps) {
     <div className="price-chart">
       <div className="chart-readout">
         <div className={`actual-readout trend-${currentTrend}`}>
-          <span>實際現價</span>
+          <span>{t.livePrice}</span>
           <strong>{chart.actualPrice === null ? '-' : chart.actualPrice.toFixed(2)}</strong>
         </div>
         <div className={`movement-readout trend-${currentTrend}`}>
-          <span>今日升跌</span>
+          <span>{t.dayChange}</span>
           <strong>{formatMovement(chart.dailyChange, chart.dailyChangePercent)}</strong>
         </div>
         <div className="hover-readout">
@@ -323,15 +362,85 @@ function PriceChart({ current, history, previousClose }: PriceChartProps) {
   )
 }
 
+function SidebarItem({ entry, isActive, isFav, onSelect, onToggleFav }: SidebarItemProps) {
+  const t = useT()
+  return (
+    <div className={`sidebar-item${isActive ? ' sidebar-item-active' : ''}`}>
+      <button className="sidebar-item-body" onClick={onSelect}>
+        <span className="sidebar-code">{entry.number}</span>
+        <span className="sidebar-name">{entry.name}</span>
+        <span className="sidebar-price">{entry.price}</span>
+        <span className={`sidebar-change trend-${entry.trend}`}>
+          {formatMovement(entry.change, entry.changePercent)}
+        </span>
+      </button>
+      <button
+        className={`sidebar-star${isFav ? ' sidebar-star-active' : ''}`}
+        onClick={onToggleFav}
+        aria-label={isFav ? t.removeFav : t.addFav}
+      >
+        {isFav ? '★' : '☆'}
+      </button>
+    </div>
+  )
+}
+
 function App() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [stockCode, setStockCode] = useState('5')
   const [stock, setStock] = useState<StockData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [sidebarTab, setSidebarTab] = useState<'fav' | 'recent'>('fav')
+  const [favourites, setFavourites] = useState<SidebarEntry[]>(() => {
+    try { return JSON.parse(localStorage.getItem('hkstock_fav') ?? '[]') } catch { return [] }
+  })
+  const [recentHistory, setRecentHistory] = useState<SidebarEntry[]>(() => {
+    try { return JSON.parse(localStorage.getItem('hkstock_recent') ?? '[]') } catch { return [] }
+  })
+  const favouritesRef = useRef<SidebarEntry[]>(favourites)
+  const [lang, setLang] = useState<Lang>(
+    () => (localStorage.getItem('hkstock_lang') as Lang | null) ?? 'zh'
+  )
+  const [source, setSource] = useState<Source>(
+    () => (localStorage.getItem('hkstock_source') as Source | null) ?? 'yahoo'
+  )
+  const t = translations[lang]
 
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true })
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem('hkstock_fav', JSON.stringify(favourites))
+    favouritesRef.current = favourites
+  }, [favourites])
+
+  useEffect(() => {
+    localStorage.setItem('hkstock_recent', JSON.stringify(recentHistory))
+  }, [recentHistory])
+
+  useEffect(() => { localStorage.setItem('hkstock_lang', lang) }, [lang])
+  useEffect(() => { localStorage.setItem('hkstock_source', source) }, [source])
+
+  useEffect(() => {
+    const refresh = async () => {
+      const current = favouritesRef.current
+      if (!current.length) return
+      const updated = await Promise.all(
+        current.map(async (entry) => {
+          try {
+            const result = await window.stockAPI?.getStock(entry.number)
+            return result ? stockToSidebarEntry(result) : entry
+          } catch {
+            return entry
+          }
+        })
+      )
+      setFavourites(updated)
+    }
+    const id = setInterval(refresh, 60000)
+    return () => clearInterval(id)
   }, [])
 
   const view = useMemo(() => {
@@ -375,21 +484,21 @@ function App() {
     window.requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }))
   }
 
-  const searchStock = async () => {
+  const fetchStock = async (code: string) => {
     if (loading) return
 
-    const code = stockCode.trim()
+    const trimmed = code.trim()
 
-    if (!code) {
+    if (!trimmed) {
       setStock(null)
-      setError('請輸入股票編號。')
+      setError(t.errEnterCode)
       keepInputFocused()
       return
     }
 
     if (!window.stockAPI) {
       setStock(null)
-      setError('股票搜尋只可在 Electron 應用程式使用。')
+      setError(t.errElectronOnly)
       keepInputFocused()
       return
     }
@@ -399,126 +508,232 @@ function App() {
       setError('')
       setStock(null)
 
-      const result = await window.stockAPI.getStock(code)
+      const result = await window.stockAPI.getStock(trimmed, source)
 
       setStock(result)
+
+      const entry = stockToSidebarEntry(result)
+      setRecentHistory(prev => {
+        const filtered = prev.filter(e => e.number !== entry.number)
+        return [entry, ...filtered].slice(0, 20)
+      })
+      setFavourites(prev =>
+        prev.some(e => e.number === entry.number)
+          ? prev.map(e => e.number === entry.number ? entry : e)
+          : prev
+      )
     } catch {
-      setError('無法載入股票資料，請檢查股票編號。')
+      setError(t.errLoadFailed)
     } finally {
       setLoading(false)
       keepInputFocused()
     }
   }
 
+  const searchStock = () => fetchStock(stockCode)
+
+  const loadFromSidebar = (number: string) => {
+    setStockCode(number)
+    fetchStock(number)
+  }
+
+  const isFav = (number: string) => favourites.some(e => e.number === number)
+
+  const toggleFav = (number: string) => {
+    if (isFav(number)) {
+      setFavourites(prev => prev.filter(e => e.number !== number))
+      return
+    }
+    if (favourites.length >= 10) {
+      setError(t.errFavLimit)
+      return
+    }
+    const entry = stock?.number === number
+      ? stockToSidebarEntry(stock)
+      : recentHistory.find(e => e.number === number) ?? null
+    if (entry) setFavourites(prev => [...prev, entry])
+  }
+
+  const sidebarItems = sidebarTab === 'fav' ? favourites : recentHistory
+
   return (
-    <div className="page">
-      <header className="app-header">
-        <div className="title-block">
-          <h1>港股查詢</h1>
-          <p>{stock ? `${stock.name} - ${stock.number} - ${formatSource(stock.source)}` : '香港市場報價'}</p>
+    <LangContext.Provider value={t}>
+    <div className="app-layout">
+      <aside className="sidebar">
+        <div className="sidebar-tabs">
+          <button
+            className={`sidebar-tab${sidebarTab === 'fav' ? ' sidebar-tab-active' : ''}`}
+            onClick={() => setSidebarTab('fav')}
+          >
+            {t.favTab}
+          </button>
+          <button
+            className={`sidebar-tab${sidebarTab === 'recent' ? ' sidebar-tab-active' : ''}`}
+            onClick={() => setSidebarTab('recent')}
+          >
+            {t.recentTab}
+          </button>
         </div>
 
-        <form className="search-row" onSubmit={(event) => {
-          event.preventDefault()
-          searchStock()
-        }}>
-          <input
-            ref={inputRef}
-            className="search-input"
-            value={stockCode}
-            onChange={(event) => setStockCode(event.target.value)}
-            placeholder="例如：5, 700, 9988"
-            autoComplete="off"
-          />
-
-          <button
-            className="search-button"
-            type="submit"
-            disabled={loading}
-            onMouseDown={(event) => event.preventDefault()}
-          >
-            {loading ? '載入中' : '搜尋'}
-          </button>
-        </form>
-      </header>
-
-      <p className="status-line" role={error ? 'alert' : undefined} aria-live="polite">
-        {error}
-      </p>
-
-      <main className={stock && view ? 'workspace' : 'workspace workspace-empty'}>
-        {stock && view ? (
-          <>
-            <section className="summary-grid" aria-label="股票摘要">
-              <MetricTile
-                label="現價"
-                subValue={formatMovement(view.currentChange, view.currentChangePercent)}
-                tone={view.currentTrend === 'up' ? 'up' : view.currentTrend === 'down' ? 'down' : 'primary'}
-                trend={view.currentTrend}
-                value={stock.currentPrice}
+        <div className="sidebar-list">
+          {sidebarItems.length === 0 ? (
+            <p className="sidebar-empty">
+              {sidebarTab === 'fav'
+                ? <>{t.noFav}<br />{t.noFavHint}</>
+                : t.noRecent}
+            </p>
+          ) : (
+            sidebarItems.map(entry => (
+              <SidebarItem
+                key={entry.number}
+                entry={entry}
+                isActive={stock?.number === entry.number}
+                isFav={isFav(entry.number)}
+                onSelect={() => loadFromSidebar(entry.number)}
+                onToggleFav={() => toggleFav(entry.number)}
               />
-              <MetricTile label="今日最高" value={stock.todayTop} tone="high" />
-              <MetricTile label="今日最低" value={stock.todayBottom} tone="low" />
-              <MetricTile label="52週範圍" value={`${stock.week52Bottom} - ${stock.week52Top}`} />
-            </section>
+            ))
+          )}
+        </div>
 
-            <section className="content-grid">
-              <div className="chart-panel price-panel">
-                <div className="panel-heading">
-                  <h2>一年價格圖</h2>
-                  <span>每日收市價</span>
-                </div>
-                <PriceChart current={view.current} history={view.history} previousClose={view.previousClose} />
-              </div>
-
-              <div className="chart-panel range-panel">
-                <div className="panel-heading">
-                  <h2>價格位置</h2>
-                  <span>現價對比區間</span>
-                </div>
-                <div className="range-list">
-                  <RangeChart
-                    current={view.current}
-                    high={view.todayHigh}
-                    highLabel={stock.todayTop}
-                    label="今日"
-                    low={view.todayLow}
-                    lowLabel={stock.todayBottom}
-                  />
-                  <RangeChart
-                    current={view.current}
-                    high={view.week52High}
-                    highLabel={stock.week52Top}
-                    label="52週"
-                    low={view.week52Low}
-                    lowLabel={stock.week52Bottom}
-                  />
-                </div>
-              </div>
-
-              <div className="chart-panel averages-panel">
-                <div className="panel-heading">
-                  <h2>移動平均線</h2>
-                  <span>10日至250日</span>
-                </div>
-                <AverageChart averages={view.averages} current={view.current} trend={view.currentTrend} />
-              </div>
-            </section>
-          </>
-        ) : (
-          <section className="empty-state" aria-label="尚未載入股票">
-            <div className="placeholder-chart" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-              <span />
-              <span />
-            </div>
-            <p className="empty-copy">輸入股票編號後按搜尋，即可查看現價、升跌及一年走勢圖。</p>
-          </section>
+        {sidebarTab === 'fav' && (
+          <div className="sidebar-count">{favourites.length}/10</div>
         )}
-      </main>
+      </aside>
+
+      <div className="page">
+        {loading && <div className="loading-bar" aria-hidden="true"><div className="loading-bar-inner" /></div>}
+
+        <header className="app-header">
+          <div className="title-block">
+            <h1>{t.appTitle}</h1>
+            <p>{stock ? `${stock.name} - ${stock.number} - ${formatSource(stock.source)}` : t.marketQuotes}</p>
+          </div>
+
+          <div className="header-right">
+            <form className="search-row" onSubmit={(event) => {
+              event.preventDefault()
+              searchStock()
+            }}>
+              <input
+                ref={inputRef}
+                className="search-input"
+                value={stockCode}
+                onChange={(event) => setStockCode(event.target.value)}
+                placeholder={t.searchPlaceholder}
+                autoComplete="off"
+              />
+              <button
+                className="search-button"
+                type="submit"
+                disabled={loading}
+                onMouseDown={(event) => event.preventDefault()}
+              >
+                {loading ? t.searching : t.search}
+              </button>
+              <button
+                className="lang-btn"
+                type="button"
+                onClick={() => setLang(l => l === 'zh' ? 'en' : 'zh')}
+                aria-label="Switch language"
+              >
+                {lang === 'zh' ? 'EN' : '繁'}
+              </button>
+            </form>
+
+            <div className="source-toggle" role="group" aria-label={t.sourceLabel}>
+              {(['auto', 'etnet', 'yahoo'] as Source[]).map(s => (
+                <button
+                  key={s}
+                  className={`source-btn${source === s ? ' source-btn-active' : ''}`}
+                  onClick={() => setSource(s)}
+                >
+                  {s === 'auto' ? t.sourceAuto : s === 'etnet' ? 'ETNet' : 'Yahoo'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </header>
+
+        <p className="status-line" role={error ? 'alert' : undefined} aria-live="polite">
+          {error}
+        </p>
+
+        <main className={stock && view ? 'workspace' : 'workspace workspace-empty'}>
+          {stock && view ? (
+            <>
+              <section className="summary-grid" aria-label={t.appTitle}>
+                <MetricTile
+                  label={t.currentPrice}
+                  subValue={formatMovement(view.currentChange, view.currentChangePercent)}
+                  tone={view.currentTrend === 'up' ? 'up' : view.currentTrend === 'down' ? 'down' : 'primary'}
+                  trend={view.currentTrend}
+                  value={stock.currentPrice}
+                />
+                <MetricTile label={t.dayHigh} value={stock.todayTop} tone="high" />
+                <MetricTile label={t.dayLow} value={stock.todayBottom} tone="low" />
+                <MetricTile label={t.week52Range} value={`${stock.week52Bottom} - ${stock.week52Top}`} />
+              </section>
+
+              <section className="content-grid">
+                <div className="chart-panel price-panel">
+                  <div className="panel-heading">
+                    <h2>{t.yearChart}</h2>
+                    <span>{t.dailyClose}</span>
+                  </div>
+                  <PriceChart current={view.current} history={view.history} previousClose={view.previousClose} />
+                </div>
+
+                <div className="chart-panel range-panel">
+                  <div className="panel-heading">
+                    <h2>{t.pricePosition}</h2>
+                    <span>{t.vsRange}</span>
+                  </div>
+                  <div className="range-list">
+                    <RangeChart
+                      current={view.current}
+                      high={view.todayHigh}
+                      highLabel={stock.todayTop}
+                      label={t.today}
+                      low={view.todayLow}
+                      lowLabel={stock.todayBottom}
+                    />
+                    <RangeChart
+                      current={view.current}
+                      high={view.week52High}
+                      highLabel={stock.week52Top}
+                      label={t.week52}
+                      low={view.week52Low}
+                      lowLabel={stock.week52Bottom}
+                    />
+                  </div>
+                </div>
+
+                <div className="chart-panel averages-panel">
+                  <div className="panel-heading">
+                    <h2>{t.movingAvg}</h2>
+                    <span>{t.tenTo250d}</span>
+                  </div>
+                  <AverageChart averages={view.averages} current={view.current} trend={view.currentTrend} />
+                </div>
+              </section>
+            </>
+          ) : (
+            <section className="empty-state" aria-label={t.noStockLoaded}>
+              <div className="placeholder-chart" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+                <span />
+                <span />
+              </div>
+              <p className="empty-copy">{t.emptyInstruction}</p>
+            </section>
+          )}
+        </main>
+      </div>
     </div>
+    </LangContext.Provider>
   )
 }
 

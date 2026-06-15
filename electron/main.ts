@@ -38,6 +38,23 @@ interface EtnetQuote {
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// A real-browser User-Agent so ETNet and Yahoo don't see Electron's default UA
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+
+// Request headers that mimic a browser fetching from Yahoo Finance
+const YAHOO_HEADERS = {
+  'User-Agent': BROWSER_UA,
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://finance.yahoo.com/',
+  'Origin': 'https://finance.yahoo.com',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+}
+
+type Source = 'auto' | 'etnet' | 'yahoo'
+
 const formatNumber = (value: unknown, decimals = 3): string => {
   const num = Number(String(value).replace(/,/g, ''))
   return Number.isFinite(num) ? num.toFixed(decimals) : '-'
@@ -80,6 +97,7 @@ const getEtnetQuote = (stockCode: string): Promise<EtnetQuote> => {
       20000
     )
 
+    win.webContents.setUserAgent(BROWSER_UA)
     win.loadURL(
       `https://www.etnet.com.hk/www/chi/stocks/realtime/quote.php?code=${code}`
     )
@@ -160,10 +178,13 @@ const getYahooStock = async (stockCode: string): Promise<StockData> => {
   const code = stockCode.padStart(4, '0')
   const symbol = `${code}.HK`
 
-  const response = await axios.get(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1y&interval=1d`,
-    { timeout: 8000 }
-  )
+  // Fetch 1y (adjusted) for averages/history and 5d (unadjusted) for previous close concurrently.
+  // The 1y range uses dividend-adjusted prices — good for moving averages but wrong for
+  // the previous-close comparison. The 5d range returns raw unadjusted prices.
+  const [response, response5d] = await Promise.all([
+    axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1y&interval=1d`, { timeout: 8000, headers: YAHOO_HEADERS }),
+    axios.get(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=5d&interval=1d`, { timeout: 8000, headers: YAHOO_HEADERS }),
+  ])
 
   const result = response.data.chart.result?.[0]
 
@@ -189,11 +210,12 @@ const getYahooStock = async (stockCode: string): Promise<StockData> => {
   const closes = history.map((p) => p.close)
   const highs = quote.high.filter(Number.isFinite)
   const lows = quote.low.filter(Number.isFinite)
-  const previousClose =
-    meta.regularMarketPreviousClose ??
-    meta.chartPreviousClose ??
-    meta.previousClose ??
-    (closes.length > 0 ? closes[closes.length - 1] : null)
+
+  // Derive previous close from 5d unadjusted data:
+  // last entry = most recent traded day, second-to-last = previous day's close.
+  const closes5d = ((response5d.data.chart.result?.[0]?.indicators?.quote?.[0]?.close ?? []) as number[])
+    .filter(Number.isFinite)
+  const previousClose = closes5d.length >= 2 ? closes5d[closes5d.length - 2] : null
 
   return {
     source: '雅虎財經',
@@ -214,8 +236,35 @@ const getYahooStock = async (stockCode: string): Promise<StockData> => {
   }
 }
 
-const getStock = async (stockCode: string): Promise<StockData> => {
-  // Fetch both sources concurrently — etnet for real-time quote,
+const getStock = async (stockCode: string, source: Source = 'auto'): Promise<StockData> => {
+  if (source === 'yahoo') return getYahooStock(stockCode)
+
+  if (source === 'etnet') {
+    const etnet = await getEtnetQuote(stockCode)
+    if (!etnet.currentPrice) throw new Error('ETNet returned no price')
+    const code = stockCode.padStart(4, '0')
+    const etnetPreviousClose = (() => {
+      if (etnet.previousClose) return etnet.previousClose
+      const price = Number(etnet.currentPrice)
+      const chg   = Number(etnet.change)
+      if (Number.isFinite(price) && Number.isFinite(chg) && chg !== 0) return formatNumber(price - chg)
+      return ''
+    })()
+    return {
+      source: 'ETNet',
+      name: etnet.name || code,
+      number: code,
+      currentPrice: etnet.currentPrice,
+      todayTop: etnet.todayTop || '-',
+      todayBottom: etnet.todayBottom || '-',
+      previousClose: etnetPreviousClose || '-',
+      avg10: '-', avg20: '-', avg50: '-', avg100: '-', avg250: '-',
+      week52Top: '-', week52Bottom: '-',
+      history: []
+    }
+  }
+
+  // 'auto' — fetch both concurrently; ETNet for real-time quote,
   // Yahoo for 1-year history, moving averages, and 52-week range.
   const [etnetResult, yahooResult] = await Promise.allSettled([
     getEtnetQuote(stockCode),
@@ -235,15 +284,16 @@ const getStock = async (stockCode: string): Promise<StockData> => {
 
   const etnet = etnetResult.value
 
-  // Derive previousClose from etnet's own change value so the displayed
-  // change matches exactly what etnet shows (avoids Yahoo rounding discrepancies).
+  // Prefer the directly-scraped "昨收" label; fall back to deriving from
+  // the change value only if the label couldn't be scraped.
   const etnetPreviousClose = (() => {
+    if (etnet.previousClose) return etnet.previousClose
     const price = Number(etnet.currentPrice)
     const chg   = Number(etnet.change)
     if (Number.isFinite(price) && Number.isFinite(chg) && chg !== 0) {
       return formatNumber(price - chg)
     }
-    return etnet.previousClose  // fall back to scraped label value
+    return ''
   })()
 
   // Yahoo failed → return etnet data alone (no chart or averages)
@@ -308,8 +358,11 @@ app.commandLine.appendSwitch('disable-gpu')
 app.commandLine.appendSwitch('disable-software-rasterizer')
 
 app.whenReady().then(() => {
-  ipcMain.handle('get-stock', async (_event, stockCode: string) => {
-    return getStock(stockCode)
+  // Strip "Electron/x.y.z" from the default UA so scraped sites see a plain browser
+  app.userAgentFallback = BROWSER_UA
+
+  ipcMain.handle('get-stock', async (_event, stockCode: string, source: Source = 'auto') => {
+    return getStock(stockCode, source)
   })
 
   createWindow()

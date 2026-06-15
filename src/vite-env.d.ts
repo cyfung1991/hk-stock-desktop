@@ -5,7 +5,7 @@ import type { StockData } from './stock.interface'
 declare global {
   interface Window {
     stockAPI?: {
-      getStock: (stockCode: string) => Promise<StockData>
+      getStock: (stockCode: string, source?: 'auto' | 'etnet' | 'yahoo') => Promise<StockData>
     }
   }
 }
