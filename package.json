@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "build": "node node_modules/typescript/bin/tsc && vite build && electron-builder",
     "postbuild": "node -e \"const{rmSync,readdirSync,existsSync}=require('fs'),path=require('path');['dist','dist-electron'].forEach(d=>{try{rmSync(d,{recursive:true,force:true})}catch{}});try{readdirSync('release').forEach(v=>{['win-unpacked','linux-unpacked','mac'].forEach(u=>{const p=path.join('release',v,u);if(existsSync(p))rmSync(p,{recursive:true,force:true})})})}catch{}\"",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"

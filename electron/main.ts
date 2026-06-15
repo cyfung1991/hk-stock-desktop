@@ -127,6 +127,7 @@ interface YahooChart {
   previousClose: number | null
 }
 
+
 const getYahooChart = async (stockCode: string): Promise<YahooChart> => {
   const symbol = `${stockCode.padStart(4, '0')}.HK`
   const [r1y, r5d] = await Promise.all([
@@ -249,45 +250,29 @@ const getYahooStock = async (stockCode: string): Promise<StockData> => {
 }
 
 // ─── Eastmoney (東方財富) scraper ─────────────────────────────────────────────
-// push2.eastmoney.com is a plain JSON API — no browser needed.
+// push2delay.eastmoney.com is a plain JSON API — no browser needed.
 // HK stocks use secid prefix 116 with a 5-digit zero-padded code.
 // Field map: f43=price, f44=high, f45=low, f58=name, f60=prevClose, f169=change, f170=change%
 const getEastmoneyStock = async (stockCode: string): Promise<StockData> => {
   const code  = stockCode.padStart(4, '0')
   const secid = `116.${stockCode.padStart(5, '0')}`
 
-  // push2.eastmoney.com is an nginx proxy that sometimes returns 502.
-  // Try multiple known endpoints in order until one succeeds.
-  const EASTMONEY_HOSTS = [
-    'push2delay.eastmoney.com',
-    'push2.eastmoney.com',
-    'push2ct.eastmoney.com',
-  ]
-  const emParams = { invt: 2, fltt: 2, fields: 'f43,f44,f45,f57,f58,f60,f169,f170', secid }
-  const emHeaders = { 'User-Agent': BROWSER_UA, 'Referer': 'https://quote.eastmoney.com/', 'Accept': 'application/json, text/plain, */*' }
-
-  let quoteData: Record<string, unknown> | null = null
-  for (const host of EASTMONEY_HOSTS) {
-    try {
-      const res = await axios.get(`https://${host}/api/qt/stock/get`, { timeout: 8000, params: emParams, headers: emHeaders })
-      const d = res.data?.data
-      if (d?.f43 !== undefined && d?.f43 !== null && d?.f43 !== '-' && d?.f43 !== 0) {
-        quoteData = d
-        break
-      }
-    } catch { /* try next host */ }
-  }
-
   const [quoteRes, chartRes] = await Promise.allSettled([
-    quoteData ? Promise.resolve(quoteData) : Promise.reject(new Error('All Eastmoney hosts failed')),
+    axios.get('https://push2delay.eastmoney.com/api/qt/stock/get', {
+      timeout: 8000,
+      params:  { invt: 2, fltt: 2, fields: 'f43,f44,f45,f57,f58,f60,f169,f170', secid },
+      headers: { 'User-Agent': BROWSER_UA, 'Referer': 'https://quote.eastmoney.com/', 'Accept': 'application/json, text/plain, */*' },
+    }),
     getYahooChart(stockCode),
   ])
 
   if (quoteRes.status === 'rejected') throw quoteRes.reason
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const d = quoteRes.value as any
-  console.log(`[Eastmoney] ${secid} →`, JSON.stringify(d))
+  const d = (quoteRes.value.data?.data) as any
+  const rawPrice = d?.f43
+  if (rawPrice === undefined || rawPrice === null || rawPrice === '-' || rawPrice === 0)
+    throw new Error(`Eastmoney: no price data for ${code}`)
 
   const chart  = chartRes.status === 'fulfilled' ? chartRes.value : null
   const closes = chart?.closes ?? []
@@ -320,13 +305,11 @@ const tryAll = async (...fns: (() => Promise<StockData>)[]): Promise<StockData> 
 }
 
 const getStock = async (stockCode: string, source: Source = 'auto'): Promise<StockData> => {
-  if (source === 'yahoo')     return getYahooStock(stockCode)
-  if (source === 'eastmoney') return getEastmoneyStock(stockCode)
-  // etnet / hkex / auto: try Eastmoney first (stable JSON API), fall back to Google Finance, then Yahoo
-  const label = source === 'etnet' ? 'ETNet' : source === 'hkex' ? 'HKEX' : 'Google Finance'
+  if (source === 'yahoo') return getYahooStock(stockCode)
+  // For all other sources: try Eastmoney first, fall back to Google Finance, then Yahoo.
   return tryAll(
     () => getEastmoneyStock(stockCode),
-    () => getGoogleFinanceStock(stockCode, label),
+    () => getGoogleFinanceStock(stockCode, 'Google Finance'),
     () => getYahooStock(stockCode),
   )
 }

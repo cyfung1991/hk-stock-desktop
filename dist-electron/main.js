@@ -18763,32 +18763,19 @@ const getEastmoneyStock = async (stockCode) => {
   var _a;
   const code = stockCode.padStart(4, "0");
   const secid = `116.${stockCode.padStart(5, "0")}`;
-  const EASTMONEY_HOSTS = [
-    "push2delay.eastmoney.com",
-    "push2.eastmoney.com",
-    "push2ct.eastmoney.com"
-  ];
-  const emParams = { invt: 2, fltt: 2, fields: "f43,f44,f45,f57,f58,f60,f169,f170", secid };
-  const emHeaders = { "User-Agent": BROWSER_UA, "Referer": "https://quote.eastmoney.com/", "Accept": "application/json, text/plain, */*" };
-  let quoteData = null;
-  for (const host of EASTMONEY_HOSTS) {
-    try {
-      const res = await axios.get(`https://${host}/api/qt/stock/get`, { timeout: 8e3, params: emParams, headers: emHeaders });
-      const d2 = (_a = res.data) == null ? void 0 : _a.data;
-      if ((d2 == null ? void 0 : d2.f43) !== void 0 && (d2 == null ? void 0 : d2.f43) !== null && (d2 == null ? void 0 : d2.f43) !== "-" && (d2 == null ? void 0 : d2.f43) !== 0) {
-        quoteData = d2;
-        break;
-      }
-    } catch {
-    }
-  }
   const [quoteRes, chartRes] = await Promise.allSettled([
-    quoteData ? Promise.resolve(quoteData) : Promise.reject(new Error("All Eastmoney hosts failed")),
+    axios.get("https://push2delay.eastmoney.com/api/qt/stock/get", {
+      timeout: 8e3,
+      params: { invt: 2, fltt: 2, fields: "f43,f44,f45,f57,f58,f60,f169,f170", secid },
+      headers: { "User-Agent": BROWSER_UA, "Referer": "https://quote.eastmoney.com/", "Accept": "application/json, text/plain, */*" }
+    }),
     getYahooChart(stockCode)
   ]);
   if (quoteRes.status === "rejected") throw quoteRes.reason;
-  const d = quoteRes.value;
-  console.log(`[Eastmoney] ${secid} →`, JSON.stringify(d));
+  const d = (_a = quoteRes.value.data) == null ? void 0 : _a.data;
+  const rawPrice = d == null ? void 0 : d.f43;
+  if (rawPrice === void 0 || rawPrice === null || rawPrice === "-" || rawPrice === 0)
+    throw new Error(`Eastmoney: no price data for ${code}`);
   const chart = chartRes.status === "fulfilled" ? chartRes.value : null;
   const closes = (chart == null ? void 0 : chart.closes) ?? [];
   return {
@@ -18822,11 +18809,9 @@ const tryAll = async (...fns) => {
 };
 const getStock = async (stockCode, source = "auto") => {
   if (source === "yahoo") return getYahooStock(stockCode);
-  if (source === "eastmoney") return getEastmoneyStock(stockCode);
-  const label = source === "etnet" ? "ETNet" : source === "hkex" ? "HKEX" : "Google Finance";
   return tryAll(
     () => getEastmoneyStock(stockCode),
-    () => getGoogleFinanceStock(stockCode, label),
+    () => getGoogleFinanceStock(stockCode, "Google Finance"),
     () => getYahooStock(stockCode)
   );
 };

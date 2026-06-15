@@ -628,7 +628,7 @@ function App() {
                 ref={inputRef}
                 className="search-input"
                 value={stockCode}
-                onChange={(event) => setStockCode(event.target.value)}
+                onChange={(event) => setStockCode(event.target.value.replace(/\D/g, ''))}
                 placeholder={t.searchPlaceholder}
                 autoComplete="off"
               />
